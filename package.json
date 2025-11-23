@@ -1,0 +1,25 @@
+{
+  "name": "gemini-tool-capabilities",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xlakshan/gemini-tool-capabilities.git"
+  },
+  "keywords": [],
+  "author": "lakshan",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/0xlakshan/gemini-tool-capabilities/issues"
+  },
+  "homepage": "https://github.com/0xlakshan/gemini-tool-capabilities#readme",
+  "dependencies": {
+    "@google/genai": "^1.30.0",
+    "dotenv": "^17.2.3"
+  }
+}
