@@ -9,107 +9,172 @@ const ai = new GoogleGenAI({ apiKey: GOOGLE_GENERATIVE_AI_API_KEY });
 const TOOLS_TO_CHECK = [
   {
     id: 'google.google_search',
+    name: 'Google Search',
     config: { tools: [{ googleSearch: {} }] },
-    testPrompt: 'What is the weather in London?'
+    testPrompt: 'What is the weather in London today?'
   },
   {
     id: 'google.code_execution',
+    name: 'Code Execution',
     config: { tools: [{ codeExecution: {} }] },
-    testPrompt: 'Calculate print("hello")'
+    testPrompt: 'Calculate the sum of 123 + 456'
   },
-  // 'google.file_search' usually maps to the retrieval tool or googleSearchRetrieval
   {
     id: 'google.file_search',
-    config: { tools: [{ googleSearchRetrieval: { dynamicRetrievalConfig: { mode: 'MODE_DYNAMIC', dynamicThreshold: 0.7 } } }] },
-    testPrompt: 'Search for files'
+    name: 'File Search',
+    config: {
+      tools: [{
+        googleSearchRetrieval: {
+          dynamicRetrievalConfig: {
+            mode: 'MODE_DYNAMIC',
+            dynamicThreshold: 0.7
+          }
+        }
+      }]
+    },
+    testPrompt: 'Search for information about machine learning'
+  },
+  {
+    id: 'google.url_context',
+    name: 'URL Context',
+    config: {
+      tools: [{
+        retrieval: {
+          vertexAiSearch: {
+            datastore: 'projects/*/locations/*/collections/*/dataStores/*'
+          }
+        }
+      }]
+    },
+    // Alternative config attempt for URL grounding
+    alternativeConfig: {
+      systemInstruction: {
+        parts: [{ text: 'You can access web content from URLs provided.' }]
+      }
+    },
+    testPrompt: 'Analyze the content from https://example.com'
   }
-  // Note: 'google.url_context' is often a subset of grounding/search capabilities 
-  // and not always a distinct standalone tool config, but we can check general grounding.
 ];
 
 async function checkToolSupport(modelName, toolDef) {
   try {
-    // We use a minimal timeout to fail fast if the model hangs, 
-    // though usually rejection is immediate for unsupported tools.
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     await ai.models.generateContent({
       model: modelName,
       contents: { role: 'user', parts: [{ text: toolDef.testPrompt }] },
       config: toolDef.config,
+      signal: controller.signal
     });
 
     clearTimeout(timeout);
-    return true; // If no error is thrown, the tool is likely supported (or at least accepted)
+    return true;
   } catch (error) {
-    // Check for specific error indicating the tool is not supported
-    // Often 400 InvalidArgument or "Check your tool configuration"
+    clearTimeout(timeout);
+
+    // Abort error
+    if (error.name === 'AbortError') {
+      return '⏱️';
+    }
+
+    // Check for unsupported tool errors
     if (error.message && (
-      error.message.includes('not supported') ||
-      error.message.includes('InvalidArgument') ||
+      error.message.toLowerCase().includes('not supported') ||
+      error.message.toLowerCase().includes('invalid argument') ||
+      error.message.toLowerCase().includes('tool') ||
       error.status === 400
     )) {
       return false;
     }
 
-    // If it's a different error (e.g. billing, rate limit), strictly speaking we assume 
-    // the tool config was accepted, but the request failed for other reasons.
-    // However, to be safe, we'll mark ambiguous errors as '?'
-    return '?';
+    // Network or auth errors suggest tool might be supported
+    if (error.status === 401 || error.status === 403 || error.status === 429) {
+      return '🔒';
+    }
+
+    return '⚠️';
   }
 }
 
 async function main() {
   try {
-    console.log('Fetching model list...');
+    console.log('🔍 Fetching Gemini model list...\n');
     const modelsResponse = await ai.models.list();
-    // The list() method returns an async iterable or pager, strictly we iterate it:
-    const modelsArray = [];
 
-    // Depending on exact SDK version, list() might return { models: [] } or be iterable
-    // The standard iterator usage:
+    const modelsArray = [];
     for await (const model of modelsResponse) {
-      // Filter for only gemini models to save time, ignore embedding/imagen models
-      if (model.name.includes('gemini')) {
+      if (model.name.toLowerCase().includes('gemini')) {
         modelsArray.push(model);
       }
     }
 
-    console.log(`Found ${modelsArray.length} Gemini models. Checking tool support...\n`);
+    console.log(`✅ Found ${modelsArray.length} Gemini models\n`);
+    console.log('Testing tool support (this may take a few minutes)...\n');
 
-    // Print Header
+    // Print header
+    const colWidth = 35;
     console.log(
-      'Model Name'.padEnd(40) +
-      'Search'.padEnd(15) +
-      'Code Exec'.padEnd(15) +
-      'File Search'
+      'Model Name'.padEnd(colWidth) +
+      'Search'.padEnd(12) +
+      'Code'.padEnd(12) +
+      'File'.padEnd(12) +
+      'URL'
     );
-    console.log('-'.repeat(85));
+    console.log('='.repeat(colWidth + 48));
+
+    const results = [];
 
     for (const model of modelsArray) {
-      // Strip 'models/' prefix for cleaner display if present
       const displayName = model.name.replace('models/', '');
 
-      const searchSupport = await checkToolSupport(model.name, TOOLS_TO_CHECK[0]);
-      const codeSupport = await checkToolSupport(model.name, TOOLS_TO_CHECK[1]);
-      const fileSupport = await checkToolSupport(model.name, TOOLS_TO_CHECK[2]);
+      const toolResults = [];
+      for (const tool of TOOLS_TO_CHECK) {
+        const support = await checkToolSupport(model.name, tool);
+        toolResults.push(support);
 
-      const formatBool = (val) => val === true ? '✅' : (val === false ? '❌' : '⚠️');
+        // Respectful rate limiting
+        await new Promise(resolve => setTimeout(resolve, 600));
+      }
+
+      const formatResult = (val) => {
+        if (val === true) return '✅ Yes';
+        if (val === false) return '❌ No';
+        if (val === '⏱️') return '⏱️ Timeout';
+        if (val === '🔒') return '🔒 Auth';
+        return '⚠️ Unknown';
+      };
 
       console.log(
-        displayName.padEnd(40) +
-        formatBool(searchSupport).padEnd(15) +
-        formatBool(codeSupport).padEnd(15) +
-        formatBool(fileSupport)
+        displayName.padEnd(colWidth) +
+        formatResult(toolResults[0]).padEnd(12) +
+        formatResult(toolResults[1]).padEnd(12) +
+        formatResult(toolResults[2]).padEnd(12) +
+        formatResult(toolResults[3])
       );
 
-      // Small delay to be nice to the API rate limits
-      await new Promise(resolve => setTimeout(resolve, 500));
+      results.push({
+        model: displayName,
+        tools: toolResults
+      });
     }
 
+    console.log('\n' + '='.repeat(colWidth + 48));
+    console.log('\nLegend:');
+    console.log('✅ Yes      - Tool supported');
+    console.log('❌ No       - Tool not supported');
+    console.log('⚠️ Unknown  - Ambiguous error');
+    console.log('🔒 Auth     - Auth/billing issue');
+    console.log('⏱️ Timeout  - Request timed out');
+
+    // Summary statistics
+    const supportedCount = results.map(r => r.tools.filter(t => t === true).length);
+    const avgSupport = supportedCount.reduce((a, b) => a + b, 0) / results.length;
+    console.log(`\n📊 Average tools supported per model: ${avgSupport.toFixed(1)}/${TOOLS_TO_CHECK.length}`);
+
   } catch (error) {
-    console.error('Fatal Error:', error);
+    console.error('❌ Fatal Error:', error.message);
+    console.error('Stack:', error.stack);
   }
 }
 
