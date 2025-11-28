@@ -68,14 +68,6 @@ async function main() {
           shouldKeep: true
         },
         {
-          keyword: 'pro',
-          shouldKeep: false
-        },
-        {
-          keyword: '3',
-          shouldKeep: false
-        },
-        {
           keyword: 'robotics',
           shouldKeep: false
         },
